@@ -1309,6 +1309,21 @@ select {
 
   .nav-container {
     width: 92%;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .account-nav {
+    order: 3;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-left: 0;
+  }
+
+  .account-email {
+    max-width: 130px;
   }
 
   .nav-add-btn {

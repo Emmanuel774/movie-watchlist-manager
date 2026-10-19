@@ -1,11 +1,60 @@
 const express = require("express");
 const Movie = require("../Models/Movie");
 const axios = require("axios");
+const {
+  authenticate,
+  authenticateOptional,
+  requireAdmin,
+} = require("../middleware/authMiddleware");
 
-const router = express.Router();
 const TMDB_API = "https://api.themoviedb.org/3";
 const FEATURED_CACHE_MS = 30 * 60 * 1000;
 let featuredMovieCache = null;
+const ALLOWED_MOVIE_FIELDS = new Set([
+  "title",
+  "genre",
+  "releaseYear",
+  "status",
+  "posterPath",
+  "tmdbId",
+  "overview",
+]);
+const VALID_MOVIE_STATUSES = new Set([
+  "Want to Watch",
+  "Watching",
+  "Watched",
+]);
+
+const isValidMoviePayload = (body, { requireCoreFields = false } = {}) => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return false;
+  }
+
+  const fields = Object.keys(body);
+  if (
+    fields.length === 0 ||
+    fields.some((field) => !ALLOWED_MOVIE_FIELDS.has(field)) ||
+    (requireCoreFields &&
+      !["title", "genre", "releaseYear"].every((field) => field in body))
+  ) {
+    return false;
+  }
+
+  return !(
+    ("title" in body && (typeof body.title !== "string" || !body.title.trim())) ||
+    ("genre" in body && (typeof body.genre !== "string" || !body.genre.trim())) ||
+    ("releaseYear" in body &&
+      (!Number.isInteger(body.releaseYear) ||
+        body.releaseYear < 1888 ||
+        body.releaseYear > 2100)) ||
+    ("status" in body && !VALID_MOVIE_STATUSES.has(body.status)) ||
+    ("posterPath" in body && typeof body.posterPath !== "string") ||
+    ("overview" in body && typeof body.overview !== "string") ||
+    ("tmdbId" in body &&
+      body.tmdbId !== null &&
+      (!Number.isInteger(body.tmdbId) || body.tmdbId < 1))
+  );
+};
 
 const rankTrailerVideos = (videos = []) =>
   videos
@@ -68,13 +117,23 @@ const requestTmdb = async (path, params = {}) => {
 const normalizeTitle = (title = "") =>
   title.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
+const createMovieRouter = ({
+  MovieModel = Movie,
+  authenticateMiddleware = authenticate(),
+  optionalAuthenticateMiddleware = authenticateOptional(),
+  requireAdminMiddleware = requireAdmin,
+  tmdbRequest = requestTmdb,
+} = {}) => {
+const router = express.Router();
+
 // Get all movies
 router.get("/", async (req, res) => {
     try {
-        const movies = await Movie.find().sort({ createdAt: -1 });
+        const movies = await MovieModel.find().sort({ createdAt: -1 });
         res.json(movies);
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        console.error("Movie listing failed:", error.name);
+        res.status(500).json({ message: "Failed to retrieve movies." });
     }
 });
 
@@ -88,7 +147,7 @@ router.get("/featured", async (req, res) => {
     const releaseWindowStart = new Date(today);
     releaseWindowStart.setDate(today.getDate() - 120);
     const formatDate = (date) => date.toISOString().slice(0, 10);
-    const discoverResponse = await requestTmdb("/discover/movie", {
+    const discoverResponse = await tmdbRequest("/discover/movie", {
       include_adult: false,
       include_video: false,
       language: "en-US",
@@ -103,7 +162,7 @@ router.get("/featured", async (req, res) => {
       .slice(0, 12);
 
     for (const candidate of candidates) {
-      const detailsResponse = await requestTmdb(`/movie/${candidate.id}`, {
+      const detailsResponse = await tmdbRequest(`/movie/${candidate.id}`, {
         append_to_response: "videos",
       });
       const movie = detailsResponse.data;
@@ -139,17 +198,23 @@ router.get("/featured", async (req, res) => {
 });
 
 // Add a movie
-router.post("/", async (req, res) => {
+router.post("/", authenticateMiddleware, requireAdminMiddleware, async (req, res) => {
     try {
+        if (!isValidMoviePayload(req.body, { requireCoreFields: true })) {
+          return res.status(400).json({
+            message: "Movie payload contains invalid fields or values.",
+          });
+        }
+
         const { title, genre, releaseYear, status, posterPath, tmdbId, overview } = req.body;
 
-        if (Movie.db.readyState !== 1) {
+        if (MovieModel.db.readyState !== 1) {
           return res.status(503).json({
             message: "Database unavailable. Check MongoDB Atlas network access and try again.",
           });
         }
 
-        const movie = new Movie({
+        const movie = new MovieModel({
   title,
   genre,
   releaseYear,
@@ -163,11 +228,11 @@ router.post("/", async (req, res) => {
 
         res.status(201).json(savedMovie);
     } catch (error) {
-        console.error("Movie create failed:", error.message);
+        console.error("Movie create failed:", error.name);
         const isValidationError =
           error.name === "ValidationError" || error.name === "CastError";
         const isDatabaseUnavailable =
-          Movie.db.readyState !== 1 ||
+          MovieModel.db.readyState !== 1 ||
           /MongoServerSelectionError|MongoNetworkError|buffering timed out|SSL routines/i.test(
             error.message
           );
@@ -184,16 +249,19 @@ router.post("/", async (req, res) => {
     }
 });
 
-router.post("/:id/resolve-tmdb", async (req, res) => {
+router.post(
+  "/:id/resolve-tmdb",
+  optionalAuthenticateMiddleware,
+  async (req, res) => {
   try {
-    const movie = await Movie.findById(req.params.id);
+    const movie = await MovieModel.findById(req.params.id);
 
     if (!movie) {
       return res.status(404).json({ message: "Movie not found" });
     }
 
     if (movie.tmdbId) {
-      const response = await requestTmdb(`/movie/${movie.tmdbId}`, {
+      const response = await tmdbRequest(`/movie/${movie.tmdbId}`, {
         append_to_response: "videos",
       });
       return res.json({
@@ -205,7 +273,7 @@ router.post("/:id/resolve-tmdb", async (req, res) => {
       });
     }
 
-    const searchResponse = await requestTmdb("/search/movie", {
+    const searchResponse = await tmdbRequest("/search/movie", {
       query: movie.title,
       year: movie.releaseYear,
       include_adult: false,
@@ -225,28 +293,35 @@ router.post("/:id/resolve-tmdb", async (req, res) => {
       return res.status(404).json({ message: "No matching TMDB movie found" });
     }
 
-    const detailsResponse = await requestTmdb(`/movie/${matchingMovie.id}`, {
+    const detailsResponse = await tmdbRequest(`/movie/${matchingMovie.id}`, {
       append_to_response: "videos",
     });
     const details = detailsResponse.data;
-    const savedMovie = await Movie.findByIdAndUpdate(
-      movie._id,
-      {
-        $set: {
-          tmdbId: details.id,
-          overview: details.overview || movie.overview || "",
-          posterPath: details.poster_path || movie.posterPath || "",
-        },
-      },
-      { new: true, runValidators: true }
-    );
+    let resolvedMetadata = {
+      tmdbId: details.id,
+      overview: details.overview || movie.overview || "",
+      posterPath: details.poster_path || movie.posterPath || "",
+    };
+
+    if (req.user?.role === "admin") {
+      const savedMovie = await MovieModel.findByIdAndUpdate(
+        movie._id,
+        { $set: resolvedMetadata },
+        { new: true, runValidators: true }
+      );
+
+      resolvedMetadata = {
+        tmdbId: savedMovie.tmdbId,
+        overview: savedMovie.overview,
+        posterPath: savedMovie.posterPath,
+      };
+    }
 
     return res.json({
       ...details,
-      tmdbId: savedMovie.tmdbId,
-      posterPath: savedMovie.posterPath,
-      genre: savedMovie.genre,
-      status: savedMovie.status,
+      ...resolvedMetadata,
+      genre: movie.genre,
+      status: movie.status,
     });
   } catch (error) {
     console.error("TMDB movie resolution error:", {
@@ -255,14 +330,28 @@ router.post("/:id/resolve-tmdb", async (req, res) => {
     });
     return res.status(502).json({ message: "Failed to resolve movie details" });
   }
-});
+  }
+);
 
 // Update a movie
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateMiddleware, requireAdminMiddleware, async (req, res) => {
+  const body = req.body;
+
+  if (!isValidMoviePayload(body)) {
+    return res.status(400).json({
+      message: "Movie update contains invalid fields or values.",
+    });
+  }
+
+  const fields = Object.keys(body);
+
   try {
-    const updatedMovie = await Movie.findByIdAndUpdate(
+    const update = Object.fromEntries(
+      fields.map((field) => [field, body[field]])
+    );
+    const updatedMovie = await MovieModel.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      { $set: update },
       { new: true, runValidators: true }
     )
 
@@ -272,17 +361,18 @@ router.put('/:id', async (req, res) => {
 
     res.json(updatedMovie)
   } catch (error) {
-    res.status(500).json({
-      message: 'Failed to update movie',
-      error: error.message
+    const isValidationError =
+      error.name === "ValidationError" || error.name === "CastError";
+    res.status(isValidationError ? 400 : 500).json({
+      message: isValidationError ? "Movie update contains invalid values." : "Failed to update movie.",
     })
   }
 })
 
 // Delete a movie
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticateMiddleware, requireAdminMiddleware, async (req, res) => {
     try {
-        const deletedMovie = await Movie.findByIdAndDelete(
+        const deletedMovie = await MovieModel.findByIdAndDelete(
             req.params.id
         );
 
@@ -296,15 +386,17 @@ router.delete("/:id", async (req, res) => {
             message: "Movie deleted successfully"
         });
     } catch (error) {
-        res.status(400).json({
-            message: error.message
+        const isInvalidId = error.name === "CastError";
+        console.error("Movie delete failed:", error.name);
+        res.status(isInvalidId ? 400 : 500).json({
+            message: isInvalidId ? "Invalid movie id." : "Failed to delete movie.",
         });
     }
 });
 // Get movie details from TMDB
 router.get("/details/:id", async (req, res) => {
   try {
-    const response = await requestTmdb(`/movie/${req.params.id}`, {
+    const response = await tmdbRequest(`/movie/${req.params.id}`, {
       append_to_response: "videos",
     });
 
@@ -332,14 +424,14 @@ router.get("/search", async (req, res) => {
       });
     }
 
-    const response = await requestTmdb("/search/movie", {
+    const response = await tmdbRequest("/search/movie", {
       query,
       include_adult: false,
     });
 
     res.json(response.data.results);
   } catch (error) {
-    console.error("TMDB search error:", error.message);
+    console.error("TMDB search error:", error.name, error.response?.status);
 
     res.status(500).json({
       message: "Failed to search movies",
@@ -355,7 +447,7 @@ router.get("/video-preview", async (req, res) => {
       return res.status(400).json({ message: "Please provide a movie title" });
     }
 
-    const searchResponse = await requestTmdb("/search/movie", {
+    const searchResponse = await tmdbRequest("/search/movie", {
       query: title,
       include_adult: false,
     });
@@ -370,7 +462,7 @@ router.get("/video-preview", async (req, res) => {
       return res.json({ key: null });
     }
 
-    const videosResponse = await requestTmdb(`/movie/${movieResult.id}/videos`);
+    const videosResponse = await tmdbRequest(`/movie/${movieResult.id}/videos`);
 
     const videos = videosResponse.data?.results || [];
     const preferredVideo =
@@ -389,8 +481,12 @@ router.get("/video-preview", async (req, res) => {
 
     return res.json({ key: preferredVideo ? preferredVideo.key : null });
   } catch (error) {
-    console.error("TMDB video preview error:", error.message);
+    console.error("TMDB video preview error:", error.name, error.response?.status);
     return res.json({ key: null });
   }
 });
-module.exports = router;
+
+return router;
+};
+
+module.exports = createMovieRouter;
