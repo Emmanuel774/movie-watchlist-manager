@@ -107,6 +107,12 @@ class FakeMovieModel {
   }
 }
 
+class FakePersonalMovieModel {
+  static async deleteMany() {
+    return { deletedCount: 0 };
+  }
+}
+
 let server;
 let baseUrl;
 
@@ -114,6 +120,7 @@ before(async () => {
   server = createApp({
     UserModel: FakeUserModel,
     MovieModel: FakeMovieModel,
+    PersonalMovieModel: FakePersonalMovieModel,
   }).listen(0);
   await once(server, "listening");
   baseUrl = `http://127.0.0.1:${server.address().port}`;

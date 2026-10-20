@@ -1443,6 +1443,223 @@ select {
     padding: 0 12px;
   }
 }
+
+.guest-banner {
+  margin: 0;
+  padding: 9px 5%;
+  border-bottom: 1px solid rgba(255, 77, 103, 0.2);
+  background: rgba(255, 77, 103, 0.07);
+  color: #ffd4dc;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.guest-mode-indicator {
+  color: #ff9cac;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.collection-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 24px 0;
+}
+
+.discovery-sort-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -8px 0 20px;
+}
+
+.discovery-sort-controls button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid #343841;
+  border-radius: 999px;
+  background: transparent;
+  color: #b8bbc3;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.discovery-sort-controls button:hover,
+.discovery-sort-controls button.selected {
+  border-color: rgba(255, 77, 103, 0.6);
+  background: rgba(255, 77, 103, 0.14);
+  color: #ffd4dc;
+}
+
+.collection-nav-item,
+.personal-movie-actions button,
+.personal-details-actions button {
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid #343841;
+  border-radius: 999px;
+  background: #17191e;
+  color: #d7d9de;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.collection-nav-item:hover,
+.personal-movie-actions button:hover,
+.personal-details-actions button:hover,
+.collection-nav-item.active,
+.personal-movie-actions button.selected,
+.personal-details-actions button.selected {
+  border-color: rgba(255, 77, 103, 0.6);
+  background: rgba(255, 77, 103, 0.14);
+  color: #ffd4dc;
+}
+
+.collection-inline-error {
+  margin: 12px 0;
+  color: #ffc4ce;
+  font-size: 13px;
+}
+
+.personal-movie-actions,
+.personal-details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.personal-movie-actions {
+  margin-top: auto;
+}
+
+.personal-movie-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.personal-details {
+  display: grid;
+  gap: 12px;
+  margin: 0 28px 24px;
+  padding: 18px;
+  border: 1px solid #2b2e35;
+  border-radius: 14px;
+  background: rgba(22, 24, 29, 0.88);
+}
+
+.personal-details > label,
+.personal-details-footer > label {
+  color: #d9dbe0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.personal-details textarea {
+  width: 100%;
+  min-height: 94px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid #343841;
+  border-radius: 9px;
+  background: #0f1115;
+  color: #f5f5f5;
+  font: inherit;
+}
+
+.personal-details-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.personal-details-footer select {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #343841;
+  border-radius: 8px;
+  background: #0f1115;
+  color: #f5f5f5;
+}
+
+.collection-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.collection-dialog {
+  width: min(100%, 520px);
+  padding: clamp(24px, 5vw, 38px);
+  border: 1px solid rgba(255, 77, 103, 0.3);
+  border-radius: 18px;
+  background: #15171c;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+
+.collection-dialog h2 {
+  margin: 10px 0 12px;
+  font-size: clamp(25px, 5vw, 34px);
+}
+
+.collection-dialog > p:not(.eyebrow):not(.form-error) {
+  color: #c2c5cc;
+  line-height: 1.65;
+}
+
+.collection-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.collection-dialog-actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.collection-navigation button:focus-visible,
+.discovery-sort-controls button:focus-visible,
+.personal-movie-actions button:focus-visible,
+.personal-details button:focus-visible,
+.collection-dialog button:focus-visible {
+  outline: 2px solid #ff7185;
+  outline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  .collection-navigation {
+    gap: 7px;
+    margin: 18px 0;
+  }
+
+  .collection-nav-item {
+    min-height: 38px;
+    padding: 8px 11px;
+    font-size: 12px;
+  }
+
+  .personal-details {
+    margin: 0 16px 18px;
+  }
+
+  .details-trailer-section {
+    padding: 0 16px 18px;
+  }
+}
 .movie-actions {
   display: flex;
   gap: 6px;

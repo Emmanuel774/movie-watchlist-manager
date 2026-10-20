@@ -73,3 +73,20 @@ The one-time `npm run create-admin` command reads `MONGO_URI`, `INITIAL_ADMIN_EM
 Bearer tokens are stateless and expire after 15 minutes. There is no token blacklist. Logout and password changes increment a user-level token version; every authenticated request checks it against MongoDB, invalidating all outstanding tokens for that user, including tokens on other devices. Authenticated requests therefore require a database lookup.
 
 Movie creation, update, and deletion require an administrator bearer token. Movie listing and TMDB discovery/search/details/video-preview endpoints remain public for the current homepage and browsing flow. TMDB resolution returns details to unauthenticated and normal users without persisting metadata; administrators may persist resolved metadata. The frontend must send the login token for admin write controls and handle `401`/`403` responses.
+
+## Personal collections
+
+Personal movie state is stored separately from the administrator-managed shared movie catalogue. Each record is keyed by the authenticated user's database ID and TMDB movie ID; collection requests never accept a destination user ID. The backend stores only movie display metadata needed by the collection plus watch, favourite, watched, note, and optional rating state. Deleting an account also removes its personal movie records.
+
+All routes are mounted under `/api/collections` and require a valid bearer token:
+
+| Method and path | Request body | Result |
+|---|---|---|
+| `GET /me` | None | Returns the authenticated user's collection. |
+| `PUT /me/items/:tmdbId` | TMDB display fields (`title`, optional poster/year/genre/overview) and optional personal fields (`isFavorite`, `isWatched`, `note`, `rating`) | Creates or updates only the caller's item. Unknown fields and invalid values are rejected. |
+| `DELETE /me/items/:tmdbId` | None | Removes only the caller's item. |
+| `POST /me/merge` | `{"items":[{"tmdbId":123,"title":"Example","isFavorite":true,"isWatched":false,"note":"...","rating":8}]}` | Merges guest data into the authenticated caller's collection. The frontend sends this only after explicit confirmation. |
+
+Merges deduplicate guest entries by TMDB ID, combine favourite and watched flags, and retain existing account notes/ratings in preference to guest values. Repeating a merge is safe. The browser keeps guest data until it receives a successful merge response; failures leave local data available for retry. A personal collection is limited to 500 movies, notes to 2,000 characters, and ratings to 0–10.
+
+The public `GET /api/movies/discover` endpoint returns weekly trending movies by default; `?sort=popular` selects popular movies. `page` may be set from 1 to 500. This and the existing TMDB search, detail, trailer, and featured endpoints remain public and separate from authenticated personal collection operations.

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from './auth/useAuth.js'
+import { useCollection } from './collections/useCollection.js'
 import { api, API_URL } from './api.js'
 import './App.css'
 
@@ -87,8 +88,22 @@ const selectTrailerVideos = (videos = []) => {
 
 function App() {
   const { user, logout, persistenceWarning } = useAuth()
+  const {
+    items: collectionItems,
+    guestCount,
+    isLoading: collectionLoading,
+    error: collectionError,
+    saveMovie,
+    removeMovie,
+    openMergePrompt,
+  } = useCollection()
   const [movies, setMovies] = useState([])
+  const [discoveryMovies, setDiscoveryMovies] = useState([])
+  const [searchResults, setSearchResults] = useState([])
   const [loading, setLoading] = useState(true)
+  const [discoverySort, setDiscoverySort] = useState('trending')
+  const [loadedDiscoverySort, setLoadedDiscoverySort] = useState('')
+  const [activeSection, setActiveSection] = useState('discover')
   const [featuredMovie, setFeaturedMovie] = useState(null)
   const [featuredLoading, setFeaturedLoading] = useState(true)
   const [featuredVisible, setFeaturedVisible] = useState(true)
@@ -104,6 +119,8 @@ function App() {
   const [featuredPreviewSuspended, setFeaturedPreviewSuspended] = useState(false)
 
   const [search, setSearch] = useState('')
+  const [searchingMoviesList, setSearchingMoviesList] = useState(false)
+  const [collectionActionError, setCollectionActionError] = useState('')
   const [filter, setFilter] = useState('All')
 
   const [showModal, setShowModal] = useState(false)
@@ -121,6 +138,7 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
   const [activePreviewVideoKey, setActivePreviewVideoKey] = useState('')
 
   const [detailsMovie, setDetailsMovie] = useState(null)
+  const [noteDraft, setNoteDraft] = useState('')
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsSoundOn, setDetailsSoundOn] = useState(false)
   const [detailsTrailerIndex, setDetailsTrailerIndex] = useState(0)
@@ -165,6 +183,26 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
       isCurrent = false
     }
   }, [])
+
+  useEffect(() => {
+    let isCurrent = true
+    api.get(`${API_URL}/discover`, { params: { sort: discoverySort } })
+      .then(({ data }) => {
+        if (isCurrent && Array.isArray(data?.results)) {
+          setDiscoveryMovies(data.results)
+        }
+      })
+      .catch((error) => {
+        console.error('Movie discovery request failed:', error.response?.status || error.message)
+      })
+      .finally(() => {
+        if (isCurrent) setLoadedDiscoverySort(discoverySort)
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [discoverySort])
 
   useEffect(() => {
     let isCurrent = true
@@ -229,14 +267,13 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
     return () => observer.disconnect()
   }, [])
 
-  const searchTmdbMovies = async (query) => {
+  const searchMovies = useCallback(async (query) => {
     if (!query.trim()) {
-      setTmdbResults([])
+      setSearchResults([])
       return
     }
 
-    setSearchingMovies(true)
-
+    setSearchingMoviesList(true)
     try {
       const response = await api.get(
         `${API_URL}/search`,
@@ -247,9 +284,34 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
         }
       )
 
-      setTmdbResults(response.data)
+      setSearchResults(Array.isArray(response.data) ? response.data : [])
     } catch (error) {
       console.error('TMDB search request failed:', error.response?.status || error.message)
+      setSearchResults([])
+    } finally {
+      setSearchingMoviesList(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeSection !== 'search') return undefined
+    const timeout = window.setTimeout(() => {
+      searchMovies(search)
+    }, 350)
+    return () => window.clearTimeout(timeout)
+  }, [activeSection, search, searchMovies])
+
+  const searchTmdbMovies = async (query) => {
+    if (!query.trim()) {
+      setTmdbResults([])
+      return
+    }
+    setSearchingMovies(true)
+    try {
+      const response = await api.get(`${API_URL}/search`, { params: { query } })
+      setTmdbResults(Array.isArray(response.data) ? response.data : [])
+    } catch (error) {
+      console.error('TMDB movie selection search failed:', error.response?.status || error.message)
       setTmdbResults([])
     } finally {
       setSearchingMovies(false)
@@ -270,6 +332,10 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
 
   const openMovieDetails = async (movie) => {
     stopPreview()
+    const personalMovie = collectionItems.find(
+      (item) => item.tmdbId === Number(movie?.tmdbId ?? movie?.id)
+    )
+    setNoteDraft(personalMovie?.note || '')
     detailsSoundOnRef.current = false
     setDetailsSoundOn(false)
     setDetailsTrailerIndex(0)
@@ -377,30 +443,58 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
     }
   }
 
-  const filteredMovies = movies.filter((movie) => {
-    const matchesSearch = movie.title
-      .toLowerCase()
-      .includes(search.toLowerCase())
-
+  const personalSectionMovies = collectionItems.filter((movie) => {
+    if (activeSection === 'favorites') return movie.isFavorite
+    if (activeSection === 'watched') return movie.isWatched
+    if (activeSection === 'watchlist') return !movie.isWatched
+    return true
+  })
+  const sectionMovies = activeSection === 'discover'
+    ? discoveryMovies
+    : activeSection === 'search'
+      ? searchResults
+      : activeSection === 'catalog'
+        ? movies
+        : personalSectionMovies
+  const filteredMovies = sectionMovies.filter((movie) => {
+    const matchesSearch = !search.trim() ||
+      movie.title?.toLowerCase().includes(search.trim().toLowerCase())
     const matchesFilter =
-      filter === 'All' || movie.status === filter
-
+      activeSection !== 'catalog' ||
+      filter === 'All' ||
+      movie.status === filter
     return matchesSearch && matchesFilter
   })
+  const sectionLoading =
+    activeSection === 'discover'
+      ? loadedDiscoverySort !== discoverySort
+      : activeSection === 'catalog'
+        ? loading
+        : activeSection === 'search'
+          ? searchingMoviesList
+          : collectionLoading
 
-  const totalMovies = movies.length
+  const totalMovies = collectionItems.length
+  const wantToWatch = collectionItems.filter((movie) => !movie.isWatched).length
+  const watched = collectionItems.filter((movie) => movie.isWatched).length
 
-  const wantToWatch = movies.filter(
-    (movie) => movie.status === 'Want to Watch'
-  ).length
+  const updatePersonalMovie = async (movie, changes) => {
+    setCollectionActionError('')
+    try {
+      await saveMovie(movie, changes)
+    } catch (error) {
+      setCollectionActionError(
+        error.response?.data?.message || error.message || 'Unable to update your collection.'
+      )
+    }
+  }
 
-  const watching = movies.filter(
-    (movie) => movie.status === 'Watching'
-  ).length
-
-  const watched = movies.filter(
-    (movie) => movie.status === 'Watched'
-  ).length
+  const getCollectionId = (movie) => Number(movie.tmdbId ?? movie.id)
+  const detailsCollectionItem = detailsMovie
+    ? collectionItems.find(
+        (item) => item.tmdbId === Number(detailsMovie.tmdbId ?? detailsMovie.id)
+      )
+    : null
 
   const stopPreview = (resumeFeatured = true) => {
     if (previewTimeoutRef.current) {
@@ -449,7 +543,7 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
         }
 
         stopPreview(false)
-        setActivePreviewMovieId(movie._id)
+        setActivePreviewMovieId(getCollectionId(movie))
         setActivePreviewVideoKey(videoKey)
 
         previewStopTimeoutRef.current = setTimeout(() => {
@@ -715,16 +809,19 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
             🎬 <span>NOIR</span>
           </div>
 
-          {user.role === 'admin' && <button
+          {user?.role === 'admin' && <button
             className="nav-add-btn"
             onClick={() => {
               setSubmitError('')
+              setActiveSection('catalog')
               setShowModal(true)
             }}
           >
             + Add Movie
           </button>}
           <div className="account-nav">
+            {user ? (
+              <>
             <span className="account-email">{user.email}</span>
             <span className="account-role">{user.role === 'admin' ? 'ADMIN' : 'MEMBER'}</span>
             {user.role === 'admin' && (
@@ -733,6 +830,11 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
               </Link>
             )}
             <Link className="account-link" to="/change-password">Password</Link>
+            {guestCount > 0 && (
+              <button className="account-link" type="button" onClick={openMergePrompt}>
+                Merge guest films
+              </button>
+            )}
             <button
               className="account-logout"
               type="button"
@@ -740,9 +842,22 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
             >
               Sign out
             </button>
+              </>
+            ) : (
+              <>
+                <span className="guest-mode-indicator">GUEST MODE</span>
+                <Link className="account-link" to="/login">Sign in</Link>
+                <Link className="account-link" to="/register">Create account</Link>
+              </>
+            )}
           </div>
         </div>
       </nav>
+      {!user && (
+        <p className="guest-banner" role="status">
+          Guest mode · Your collection is saved only in this browser.
+        </p>
+      )}
       {persistenceWarning && (
         <p className="auth-storage-notice" role="status">{persistenceWarning}</p>
       )}
@@ -862,10 +977,10 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
         </div>
 
         <div className="stat-card">
-          <div className="stat-icon">▶️</div>
+          <div className="stat-icon">♥</div>
           <div>
-            <p>Watching</p>
-            <h2>{watching}</h2>
+            <p>Favourites</p>
+            <h2>{collectionItems.filter((movie) => movie.isFavorite).length}</h2>
           </div>
         </div>
 
@@ -886,24 +1001,87 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
         <div className="section-header">
 
           <div>
-            <p className="eyebrow">YOUR COLLECTION</p>
-            <h2>My Movies</h2>
+            <p className="eyebrow">
+              {activeSection === 'catalog' ? 'SHARED CATALOGUE' : 'YOUR PRIVATE CINEMA'}
+            </p>
+            <h2>
+              {{
+                discover: 'Discover',
+                search: 'Search',
+                watchlist: 'My Watchlist',
+                favorites: 'My Favourites',
+                watched: 'Watched Movies',
+                catalog: 'Movie Catalogue',
+              }[activeSection]}
+            </h2>
           </div>
 
           <div className="search-box">
             🔎
             <input
               type="text"
-              placeholder="Search movies..."
+              placeholder={activeSection === 'catalog' ? 'Search catalogue...' : 'Search TMDB movies...'}
+              aria-label={activeSection === 'catalog' ? 'Search shared movie catalogue' : 'Search TMDB movies'}
               value={search}
+              onFocus={() => {
+                if (activeSection !== 'catalog' && activeSection !== 'search') {
+                  setActiveSection('search')
+                }
+              }}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
 
         </div>
 
+        <nav className="collection-navigation" aria-label="Movie sections">
+          {[
+            ['discover', 'Discover'],
+            ['search', 'Search'],
+            ['watchlist', `My Watchlist (${collectionItems.filter((movie) => !movie.isWatched).length})`],
+            ['favorites', 'Favourites'],
+            ['watched', 'Watched'],
+            ...(user?.role === 'admin' ? [['catalog', 'Shared catalogue']] : []),
+          ].map(([sectionId, label]) => (
+            <button
+              key={sectionId}
+              type="button"
+              className={`collection-nav-item${activeSection === sectionId ? ' active' : ''}`}
+              aria-current={activeSection === sectionId ? 'page' : undefined}
+              onClick={() => {
+                setActiveSection(sectionId)
+                setSearch('')
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {activeSection === 'discover' && (
+          <div className="discovery-sort-controls" role="group" aria-label="Discovery list">
+            {[
+              ['trending', 'Trending this week'],
+              ['popular', 'Popular'],
+            ].map(([sort, label]) => (
+              <button
+                key={sort}
+                className={discoverySort === sort ? 'selected' : ''}
+                type="button"
+                aria-pressed={discoverySort === sort}
+                onClick={() => setDiscoverySort(sort)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {collectionError && <p className="collection-inline-error" role="alert">{collectionError}</p>}
+        {collectionActionError && <p className="collection-inline-error" role="alert">{collectionActionError}</p>}
 
         {/* FILTERS */}
+        {activeSection === 'catalog' && (
         <div className="filters">
 
           {['All', 'Want to Watch', 'Watching', 'Watched'].map(
@@ -919,14 +1097,15 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
           )}
 
         </div>
+        )}
 
 
         {/* MOVIES */}
-        {loading ? (
+        {sectionLoading ? (
 
           <div className="empty-state">
             <div className="loading">🎬</div>
-            <h3>Loading your collection...</h3>
+            <h3>{activeSection === 'search' ? 'Searching TMDB...' : 'Loading your films...'}</h3>
           </div>
 
         ) : filteredMovies.length === 0 ? (
@@ -936,18 +1115,22 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
             <div className="empty-icon">🍿</div>
 
             <h3>
-              {movies.length === 0
-                ? 'Your watchlist is empty'
-                : 'No movies found'}
+              {activeSection === 'discover'
+                ? 'Discovery is taking a brief intermission'
+                : ['watchlist', 'favorites', 'watched'].includes(activeSection)
+                  ? 'No films here yet'
+                  : 'No movies found'}
             </h3>
 
             <p>
-              {movies.length === 0
-                ? 'Add a movie and start building your collection.'
-                : 'Try another search or filter.'}
+              {activeSection === 'discover'
+                ? 'Please try again in a moment.'
+                : ['watchlist', 'favorites', 'watched'].includes(activeSection)
+                  ? 'Explore films and add them to your personal collection.'
+                  : 'Try another search or filter.'}
             </p>
 
-            {movies.length === 0 && user.role === 'admin' && (
+            {activeSection === 'catalog' && user?.role === 'admin' && (
               <button
                 className="hero-btn"
                 onClick={() => {
@@ -969,7 +1152,7 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
 
               <div
                 className="movie-card"
-                key={movie._id}
+                key={movie.tmdbId || movie.id || movie._id}
                 onMouseEnter={() => startPreview(movie)}
                 onMouseLeave={stopPreview}
                 onClick={(event) => {
@@ -982,7 +1165,7 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
               >
 
                 <div className="movie-poster">
-  {activePreviewMovieId === movie._id && activePreviewVideoKey ? (
+  {activePreviewMovieId === getCollectionId(movie) && activePreviewVideoKey ? (
     <div className="movie-preview-container">
       <div className="movie-preview-overlay" />
       <iframe
@@ -993,9 +1176,9 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
         allowFullScreen={false}
       />
     </div>
-  ) : movie.posterPath ? (
+  ) : movie.posterPath || movie.poster_path ? (
     <img
-      src={`https://image.tmdb.org/t/p/w500${movie.posterPath}`}
+      src={`https://image.tmdb.org/t/p/w500${movie.posterPath || movie.poster_path}`}
       alt={movie.title}
     />
   ) : (
@@ -1008,7 +1191,7 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
                   <div className="movie-title-row">
                     <h3>{movie.title}</h3>
 
-                    {user.role === 'admin' && <div className="movie-actions">
+                    {activeSection === 'catalog' && user?.role === 'admin' && <div className="movie-actions">
 
   <button
     className="edit-btn"
@@ -1036,18 +1219,63 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
                   </div>
 
                   <p className="movie-meta">
-                    {movie.genre} • {movie.releaseYear}
+                    {movie.genre || movie.genres?.map((genre) => genre.name).join(', ') ||
+                      movie.genre_ids?.map((id) => TMDB_GENRES[id]).filter(Boolean).join(', ') ||
+                      'Genre unavailable'} • {movie.releaseYear || movie.release_date?.slice(0, 4) || 'Year unknown'}
                   </p>
 
-                  <span
-                    className={`status ${
-                      movie.status
-                        .toLowerCase()
-                        .replaceAll(' ', '-')
-                    }`}
-                  >
-                    {movie.status}
-                  </span>
+                  {activeSection === 'catalog' ? (
+                    <span className={`status ${(movie.status || 'Want to Watch').toLowerCase().replaceAll(' ', '-')}`}>
+                      {movie.status || 'Want to Watch'}
+                    </span>
+                  ) : (
+                    <div className="personal-movie-actions" onClick={(event) => event.stopPropagation()}>
+                      {!collectionItems.some((item) => item.tmdbId === getCollectionId(movie)) ? (
+                        <button type="button" onClick={() => updatePersonalMovie(movie, {})}>
+                          + Watchlist
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={collectionItems.find((item) => item.tmdbId === getCollectionId(movie))?.isFavorite ? 'selected' : ''}
+                          aria-pressed={Boolean(collectionItems.find((item) => item.tmdbId === getCollectionId(movie))?.isFavorite)}
+                          onClick={() => {
+                            const saved = collectionItems.find((item) => item.tmdbId === getCollectionId(movie))
+                            updatePersonalMovie(movie, { isFavorite: !saved?.isFavorite })
+                          }}
+                        >
+                          {collectionItems.find((item) => item.tmdbId === getCollectionId(movie))?.isFavorite ? '♥ Favourited' : '♡ Favourite'}
+                        </button>
+                      )}
+                      {collectionItems.some((item) => item.tmdbId === getCollectionId(movie)) && (
+                        <>
+                          <button
+                            type="button"
+                            className={collectionItems.find((item) => item.tmdbId === getCollectionId(movie))?.isWatched ? 'selected' : ''}
+                            aria-pressed={Boolean(collectionItems.find((item) => item.tmdbId === getCollectionId(movie))?.isWatched)}
+                            onClick={() => {
+                              const saved = collectionItems.find((item) => item.tmdbId === getCollectionId(movie))
+                              updatePersonalMovie(movie, { isWatched: !saved?.isWatched })
+                            }}
+                          >
+                            {collectionItems.find((item) => item.tmdbId === getCollectionId(movie))?.isWatched ? '✓ Watched' : 'Mark watched'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await removeMovie(getCollectionId(movie))
+                              } catch (error) {
+                                setCollectionActionError(error.response?.data?.message || error.message)
+                              }
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                 </div>
 
@@ -1125,7 +1353,10 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
                     <div className="details-score-row">
                       <span>⭐ {detailsMovie.vote_average ? detailsMovie.vote_average.toFixed(1) : 'N/A'}</span>
                       <span>{detailsMovie.original_language ? detailsMovie.original_language.toUpperCase() : 'N/A'}</span>
-                      <span className="details-status-badge">{detailsMovie.status || 'Want to Watch'}</span>
+                      <span className="details-status-badge">
+                        {detailsMovie.status ||
+                          (detailsCollectionItem?.isWatched ? 'Watched' : 'In your collection')}
+                      </span>
                     </div>
 
                     <p className="details-overview">
@@ -1133,6 +1364,67 @@ const [selectedTmdbMovie, setSelectedTmdbMovie] = useState(null)
                     </p>
                   </div>
                 </div>
+
+                <section className="personal-details" aria-label="Personal movie details">
+                  <div className="personal-details-actions">
+                    <button
+                      type="button"
+                      className={detailsCollectionItem?.isFavorite ? 'selected' : ''}
+                      aria-pressed={Boolean(detailsCollectionItem?.isFavorite)}
+                      onClick={() =>
+                        updatePersonalMovie(detailsMovie, {
+                          isFavorite: !detailsCollectionItem?.isFavorite,
+                        })
+                      }
+                    >
+                      {detailsCollectionItem?.isFavorite ? '♥ Favourited' : '♡ Add to favourites'}
+                    </button>
+                    <button
+                      type="button"
+                      className={detailsCollectionItem?.isWatched ? 'selected' : ''}
+                      aria-pressed={Boolean(detailsCollectionItem?.isWatched)}
+                      onClick={() =>
+                        updatePersonalMovie(detailsMovie, {
+                          isWatched: !detailsCollectionItem?.isWatched,
+                        })
+                      }
+                    >
+                      {detailsCollectionItem?.isWatched ? '✓ Mark unwatched' : 'Mark watched'}
+                    </button>
+                  </div>
+                  <label htmlFor="personal-movie-note">Private note</label>
+                  <textarea
+                    id="personal-movie-note"
+                    value={noteDraft}
+                    maxLength={2000}
+                    placeholder="Add a thought, quote, or note for your next movie night…"
+                    onChange={(event) => setNoteDraft(event.target.value)}
+                  />
+                  <div className="personal-details-footer">
+                    <label htmlFor="personal-movie-rating">Your rating</label>
+                    <select
+                      id="personal-movie-rating"
+                      value={detailsCollectionItem?.rating ?? ''}
+                      onChange={(event) =>
+                        updatePersonalMovie(detailsMovie, {
+                          rating: event.target.value === '' ? null : Number(event.target.value),
+                        })
+                      }
+                    >
+                      <option value="">No rating</option>
+                      {Array.from({ length: 11 }, (_, rating) => (
+                        <option key={rating} value={rating}>{rating}/10</option>
+                      ))}
+                    </select>
+                    <button
+                      className="featured-primary-btn"
+                      type="button"
+                      onClick={() => updatePersonalMovie(detailsMovie, { note: noteDraft })}
+                    >
+                      Save private note
+                    </button>
+                  </div>
+                </section>
 
                 <section className="details-trailer-section" aria-label="Movie trailer">
                   <div className="details-trailer-heading">

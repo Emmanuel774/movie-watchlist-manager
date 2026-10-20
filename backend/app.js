@@ -3,15 +3,22 @@ const cors = require("cors");
 const createMovieRouter = require("./routes/movieRoutes");
 const createAuthRouter = require("./routes/authRoutes");
 const createAdminRouter = require("./routes/adminRoutes");
+const createCollectionRouter = require("./routes/collectionRoutes");
 const User = require("./Models/User");
 const Movie = require("./Models/Movie");
+const PersonalMovie = require("./Models/PersonalMovie");
 const {
   authenticate,
   authenticateOptional,
   requireAdmin,
 } = require("./middleware/authMiddleware");
 
-const createApp = ({ UserModel, MovieModel, tmdbRequest } = {}) => {
+const createApp = ({
+  UserModel = User,
+  MovieModel = Movie,
+  PersonalMovieModel = PersonalMovie,
+  tmdbRequest,
+} = {}) => {
   const app = express();
   const allowedOrigins = [
     process.env.FRONTEND_URL,
@@ -27,8 +34,16 @@ const createApp = ({ UserModel, MovieModel, tmdbRequest } = {}) => {
     createAdminRouter({
       UserModel,
       MovieModel,
+      PersonalMovieModel,
       authenticateMiddleware: authenticate(UserModel),
       requireAdminMiddleware: requireAdmin,
+    })
+  );
+  app.use(
+    "/api/collections",
+    createCollectionRouter({
+      authenticateMiddleware: authenticate(UserModel),
+      PersonalMovieModel,
     })
   );
   app.use(

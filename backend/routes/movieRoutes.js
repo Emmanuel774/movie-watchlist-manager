@@ -137,6 +137,35 @@ router.get("/", async (req, res) => {
     }
 });
 
+router.get("/discover", async (req, res) => {
+  const page = Number(req.query.page || 1);
+  const sort = req.query.sort || "trending";
+  if (!Number.isInteger(page) || page < 1 || page > 500 || !["trending", "popular"].includes(sort)) {
+    return res.status(400).json({ message: "Discovery options are invalid." });
+  }
+
+  try {
+    const path = sort === "trending" ? "/trending/movie/week" : "/movie/popular";
+    const response = await tmdbRequest(path, {
+      include_adult: false,
+      language: "en-US",
+      page,
+    });
+    res.set("Cache-Control", "public, max-age=300");
+    return res.json({
+      page: response.data?.page || page,
+      results: response.data?.results || [],
+      total_pages: response.data?.total_pages || 1,
+    });
+  } catch (error) {
+    console.error("TMDB discovery failed:", {
+      code: error.code,
+      status: error.response?.status,
+    });
+    return res.status(502).json({ message: "Unable to load movie discovery." });
+  }
+});
+
 router.get("/featured", async (req, res) => {
   try {
     if (featuredMovieCache && featuredMovieCache.expiresAt > Date.now()) {

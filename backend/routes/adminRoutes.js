@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const User = require("../Models/User");
 const Movie = require("../Models/Movie");
+const PersonalMovie = require("../Models/PersonalMovie");
 const { publicUser } = require("../middleware/authMiddleware");
 const {
   isStrongPassword,
@@ -100,6 +101,7 @@ const executeWithAdminRosterGuard = async ({
 const createAdminRouter = ({
   UserModel = User,
   MovieModel = Movie,
+  PersonalMovieModel = PersonalMovie,
   authenticateMiddleware,
   requireAdminMiddleware,
 } = {}) => {
@@ -328,6 +330,15 @@ const createAdminRouter = ({
       const deleted = result.value;
       if (!deleted) {
         return res.status(404).json({ message: "User not found." });
+      }
+
+      try {
+        await PersonalMovieModel.deleteMany({ userId: req.params.id });
+      } catch (error) {
+        console.error("Deleted user collection cleanup failed:", error.name);
+        return res.status(500).json({
+          message: "User was deleted, but their personal movie data could not be removed.",
+        });
       }
 
       return res.json({ message: "User deleted." });

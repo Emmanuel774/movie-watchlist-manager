@@ -5,6 +5,7 @@ const apiPath = API_URL.replace(/\/+$/, '')
 const apiRoot = apiPath.replace(/\/movies$/, '')
 export const AUTH_URL = `${apiRoot}/auth`
 export const ADMIN_URL = `${apiRoot}/admin`
+export const COLLECTION_URL = `${apiRoot}/collections`
 
 let accessToken = null
 
@@ -32,6 +33,10 @@ api.interceptors.request.use((config) => {
       isPathWithin(
         requestUrl.pathname,
         new URL(ADMIN_URL, window.location.href).pathname
+      ) ||
+      isPathWithin(
+        requestUrl.pathname,
+        new URL(COLLECTION_URL, window.location.href).pathname
       ))
   const isPublicAuthRequest =
     requestUrl.pathname.endsWith('/auth/login') ||
@@ -55,6 +60,7 @@ api.interceptors.response.use(
     const protectedPaths = [
       new URL(AUTH_URL, window.location.href).pathname,
       new URL(ADMIN_URL, window.location.href).pathname,
+      new URL(COLLECTION_URL, window.location.href).pathname,
     ]
 
     if (

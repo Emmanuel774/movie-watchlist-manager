@@ -48,10 +48,18 @@ export default function AuthPage({ mode }) {
       const credentials = { email: email.trim(), password }
       if (isRegister) {
         await register(credentials)
-        navigate('/login', {
-          replace: true,
-          state: { message: 'Your account is ready. Sign in to continue.' },
-        })
+        try {
+          await login(credentials)
+          navigate('/', { replace: true })
+        } catch {
+          navigate('/login', {
+            replace: true,
+            state: {
+              message:
+                'Your account was created. Sign in to continue; your guest collection remains saved on this device.',
+            },
+          })
+        }
       } else {
         await login(credentials)
         navigate(location.state?.from || '/', { replace: true })

@@ -1,5 +1,7 @@
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider } from './auth/AuthContext.jsx'
+import { CollectionProvider } from './collections/CollectionContext.jsx'
+import CollectionMergePrompt from './collections/CollectionMergePrompt.jsx'
 import { useAuth } from './auth/useAuth.js'
 import AuthPage from './auth/AuthPage.jsx'
 import ChangePasswordPage from './auth/ChangePasswordPage.jsx'
@@ -80,11 +82,7 @@ function AppRoutes() {
       />
       <Route
         path="/"
-        element={
-          <ProtectedRoute>
-            <MovieHome />
-          </ProtectedRoute>
-        }
+        element={<MovieHome />}
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -95,7 +93,10 @@ export default function App() {
   return (
     <HashRouter>
       <AuthProvider>
-        <AppRoutes />
+        <CollectionProvider>
+          <AppRoutes />
+          <CollectionMergePrompt />
+        </CollectionProvider>
       </AuthProvider>
     </HashRouter>
   )
